@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    paths-ignore:
+      - ".github/**"
+      - "**/*.md"
 
 env:
   CARGO_TERM_COLOR: always
