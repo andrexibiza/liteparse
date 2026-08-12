@@ -20,14 +20,42 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect parser-affecting changes
+        id: changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          run_validation=false
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              .github/*|*.md)
+                ;;
+              *)
+                run_validation=true
+                break
+                ;;
+            esac
+          done < <(git diff --name-only -z "$BASE_SHA" "$HEAD_SHA")
+          echo "run_validation=$run_validation" >> "$GITHUB_OUTPUT"
+
+      - name: Skip parser-output validation
+        if: github.event_name == 'pull_request' && steps.changes.outputs.run_validation != 'true'
+        run: echo "Only GitHub metadata or Markdown changed; parser outputs cannot change."
 
       - name: Install system dependencies
+        if: github.event_name == 'push' || steps.changes.outputs.run_validation == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y libtesseract-dev libleptonica-dev \
             tesseract-ocr libreoffice imagemagick ghostscript
 
       - uses: actions/cache@v4
+        if: github.event_name == 'push' || steps.changes.outputs.run_validation == 'true'
         with:
           path: |
             ~/.cargo/registry
@@ -37,9 +65,11 @@ jobs:
           key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build
+        if: github.event_name == 'push' || steps.changes.outputs.run_validation == 'true'
         run: cargo build --release
 
       - name: Download from HuggingFace
+        if: github.event_name == 'push' || steps.changes.outputs.run_validation == 'true'
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
@@ -48,10 +78,11 @@ jobs:
 
       - name: Compare outputs
         id: compare
+        if: github.event_name == 'push' || steps.changes.outputs.run_validation == 'true'
         run: ./scripts/compare-outputs.sh expected-dataset
 
       - name: Upload comparison results
-        if: always()
+        if: always() && (github.event_name == 'push' || steps.changes.outputs.run_validation == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: comparison-results
